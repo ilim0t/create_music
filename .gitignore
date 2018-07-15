@@ -1,0 +1,9 @@
+.DS_Store
+*.model
+*.swp
+.idea
+.python-version
+__pycache__
+result
+data
+
