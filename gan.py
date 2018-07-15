@@ -49,6 +49,8 @@ class Trans(object):
 
 
 class DCGANUpdater(chainer.training.StandardUpdater):
+    # 0 -> 生成由来
+    # 1 -> 実際由来
     def __init__(self, *args, **kwargs):
         self.gen, self.dis = kwargs.pop('models')
         super(DCGANUpdater, self).__init__(*args, **kwargs)
@@ -58,12 +60,16 @@ class DCGANUpdater(chainer.training.StandardUpdater):
         L1 = F.sum(F.softplus(-y_real)) / batchsize
         L2 = F.sum(F.softplus(y_fake)) / batchsize
         loss = L1 + L2
+        # loss = -F.sum(F.log_softmax(y_real)[:, 0]) / batchsize
+        # loss += -F.sum(F.log_softmax(y_fake)[:, 1]) / batchsize
+        # loss /= 2
         chainer.report({'loss': loss}, dis)
         return loss
 
     def loss_gen(self, gen, y_fake):
         batchsize = len(y_fake)
         loss = F.sum(F.softplus(-y_fake)) / batchsize
+        # loss = -F.sum(F.log_softmax(y_fake)[:, 0]) / batchsize
         chainer.report({'loss': loss}, gen)
         return loss
 
@@ -119,7 +125,7 @@ def show_chord(gen, dis, num, seed):
         y = [[tochord(j) for j in i]for i in y.data]
         with open('result/chord.txt', 'w') as f:
             for i in y:
-                f.write(" ".join(i) + "\n")
+                f.write("   ".join(i) + "\n")
     return make_chord
 
 
@@ -145,7 +151,7 @@ def main():
     print(json.dumps(args.__dict__, indent=2))
 
 
-    gen = mymodel.Generator(481, 20)
+    gen = mymodel.Generator(481, 128)
     dis = mymodel.Discriminator(481, 32)
 
     # GPUで動かせるのならば動かす
@@ -181,8 +187,9 @@ def main():
     trainer = training.Trainer(updater, stop_trigger)
 
     # snapshot(学習中の重み情報)の保存
-    frequency = args.frequency
-    trainer.extend(extensions.snapshot(), trigger=(frequency, 'iteration'))
+    trainer.extend(extensions.snapshot(filename='snapshot_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
+    trainer.extend(extensions.snapshot_object(gen, 'gen_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
+    trainer.extend(extensions.snapshot_object(dis, 'dis_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
 
     # trainデータでの評価の表示頻度設定
     logreport = extensions.LogReport(trigger=(args.interval, 'iteration'))
