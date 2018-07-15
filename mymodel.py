@@ -99,6 +99,39 @@ def loss_r(log, loss, num=10):
     return None
 
 
+class Res_block(chainer.Chain):
+    def __init__(self, in_channels, out_channels, ksize, activation=F.relu, init_stride=None, stride=1, pad=1):
+        initializer = chainer.initializers.HeNormal()
+        self.activation = activation
+        super(Res_block, self).__init__()
+        with self.init_scope():
+            # pre-activation
+            self.bn1 = L.BatchNormalization(in_channels)
+            self.conv1 = L.ConvolutionND(1 , in_channels, out_channels, ksize, init_stride or stride, pad, initialW=initializer)
+            self.bn2 = L.BatchNormalization(out_channels)
+            self.conv2 = L.ConvolutionND(1 , out_channels, out_channels, ksize, stride, pad, initialW=initializer)
+            self.bn3 = L.BatchNormalization(out_channels)
+
+            self.xconv = L.ConvolutionND(1 , in_channels, out_channels, 1, stride=2, initialW=initializer)
+
+    def __call__(self, x, ratio):
+        h = self.bn1(x)
+        h = self.conv1(h)
+        h = self.activation(self.bn2(h))
+        h = F.dropout(h, ratio)  # Stochastic Depth
+        h = self.conv2(h)
+        h = self.bn3(h)  # 必要?
+
+        if x.shape[2:] != h.shape[2:]:  # skipではないほうのデータの縦×横がこのblock中で小さくなっていた場合skipの方もそれに合わせて小さくする
+            # x = F.average_pooling_2d(x, 1, 2)  # これでいいのか？
+            x = self.xconv(x)
+        if x.shape[1] != h.shape[1]:  # skipではない方のデータのチャンネル数がこのblock内で増えている場合skipの方もそれに合わせて増やす(zero-padding)
+            xp = chainer.cuda.get_array_module(x.data)  # GPUが使える場合も想定
+            p = chainer.Variable(xp.zeros((x.shape[0], h.shape[1] - x.shape[1], *x.shape[2:]), dtype=xp.float32))
+            x = F.concat((x, p))
+        return x + h
+
+
 class Bottle_neck_block(chainer.Chain):
     def __init__(self, in_channels, out_channels, ksize, activation=F.relu, init_stride=None, stride=1, pad=1):
         initializer = chainer.initializers.HeNormal()
@@ -146,16 +179,16 @@ class Generator(chainer.Chain):
         with self.init_scope():
             self.l = L.Linear(450*15)
 
-            self.conv1 = L.ConvolutionND(1, 16, 32, 7, stride=1, pad=3)
+            self.conv1 = L.ConvolutionND(1, 16, 64, 7, stride=1, pad=3)
 
-            self.block1_1 = Bottle_neck_block(32, 32, 3, pad=1)
-            self.block1_2 = Bottle_neck_block(32, 32, 3, pad=1)
+            self.block1_1 = Res_block(64, 64, 3, pad=1)
+            self.block1_2 = Res_block(64, 64, 3, pad=1)
 
-            self.block2_1 = Bottle_neck_block(32, 64, 3, pad=1)
-            self.block2_2 = Bottle_neck_block(64, 64, 3, pad=1)
+            self.block2_1 = Res_block(64, 128, 3, pad=1)
+            self.block2_2 = Res_block(128, 128, 3, pad=1)
 
-            self.block3_1 = Bottle_neck_block(64, 128, 3, pad=1)
-            self.block3_2 = Bottle_neck_block(128, 128, 3, pad=1)
+            self.block3_1 = Res_block(128, 256, 3, pad=1)
+            self.block3_2 = Res_block(256, 256, 3, pad=1)
 
 
             # self.dc1 = L.DeconvolutionND(1, 32, 32, ksize=7, stride=1)
@@ -163,7 +196,7 @@ class Generator(chainer.Chain):
             # self.dc3 = L.DeconvolutionND(1, 32, 32, ksize=3, stride=1)
             # self.dc4 = L.DeconvolutionND(1, 32, 32, ksize=3, stride=1)
             # self.dc5 = L.DeconvolutionND(1, 32, 32, ksize=3, stride=1)
-            self.decoder = L.ConvolutionND(1, 128, n_voc, ksize=1, stride=1)
+            self.decoder = L.ConvolutionND(1, 256, n_voc, ksize=1, stride=1)
             #
             # # self.bn0 = L.BatchNormalization(size=self.bottom_width*self.bottom_width*self.ch)
             # self.bn1 = L.BatchNormalization(32)
@@ -212,14 +245,16 @@ class Discriminator(chainer.Chain):
             self.embed = L.EmbedID(n_vocab, n_vec)
             self.encoder = L.NStepBiLSTM(n_layers, n_vec, n_vec, self.dropout)
 
-            self.block1_1 = Bottle_neck_block(32, 32, 3, activation=F.leaky_relu, pad=1)
-            self.block1_2 = Bottle_neck_block(32, 32, 3, activation=F.leaky_relu, pad=1)
+            self.conv1 = L.ConvolutionND(1, n_vec, 64, 7, stride=1, pad=3)
 
-            self.block2_1 = Bottle_neck_block(32, 64, 3, activation=F.leaky_relu, init_stride=2, pad=1)
-            self.block2_2 = Bottle_neck_block(64, 64, 3, activation=F.leaky_relu, pad=1)
+            self.block1_1 = Res_block(64, 64, 3, activation=F.leaky_relu, pad=1)
+            self.block1_2 = Res_block(64, 64, 3, activation=F.leaky_relu, pad=1)
 
-            self.block3_1 = Bottle_neck_block(64, 128, 3, activation=F.leaky_relu, init_stride=2, pad=1)
-            self.block3_2 = Bottle_neck_block(128, 128, 3, activation=F.leaky_relu, pad=1)
+            self.block2_1 = Res_block(64, 128, 3, activation=F.leaky_relu, init_stride=2, pad=1)
+            self.block2_2 = Res_block(128, 128, 3, activation=F.leaky_relu, pad=1)
+
+            self.block3_1 = Res_block(128, 256, 3, activation=F.leaky_relu, init_stride=2, pad=1)
+            self.block3_2 = Res_block(256, 256, 3, activation=F.leaky_relu, pad=1)
 
             self.l = L.Linear(2, initialW=initializer)
 
@@ -229,10 +264,12 @@ class Discriminator(chainer.Chain):
             h = F.softmax(x, axis=1)
             w = F.expand_dims(self.embed.W.T, axis=2)
             h = F.convolution_nd(h, w)
-            h += F.transpose(self.embed(F.argmax(x, axis=1)), [0, 2, 1])
-            h /= 2
+            # h = F.transpose(self.embed(F.argmax(x, axis=1)), [0, 2, 1])
+            # h /= 2
         else:
             h = self.sequence_embed(x)
+
+        h = self.conv1(h)
 
         n = 0.5 / 6
         h = self.block1_1(h, 1 * n)  # => 64  ×  32

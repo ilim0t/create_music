@@ -132,19 +132,19 @@ def show_chord(gen, dis, num, seed):
 def main():
     parser = argparse.ArgumentParser(
         description='RNNとかで曲生成したい!')
-    parser.add_argument('--batchsize', '-b', type=int, default=64,
+    parser.add_argument('--batchsize', '-b', type=int, default=32,
                         help='Number of images in each mini-batch')
     parser.add_argument('--epoch', '-e', type=int, default=10,
                         help='Number of sweeps over the dataset to train')
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
-    parser.add_argument('--interval', '-i', type=int, default=10,
+    parser.add_argument('--interval', '-i', type=int, default=5,
                         help='プログレスバー,表示とかのインターバル')
-    parser.add_argument('--vec', '-v', type=int, default=32,
+    parser.add_argument('--vec', '-v', type=int, default=64,
                         help='中間層の次元')
     parser.add_argument('--layer', '-l', type=int, default=2,
                         help='レイヤーの層')
-    parser.add_argument('--frequency', '-f', type=int, default=400,
+    parser.add_argument('--frequency', '-f', type=int, default=5,
                         help='保存頻度')
 
     args = parser.parse_args()
@@ -152,7 +152,7 @@ def main():
 
 
     gen = mymodel.Generator(481, 128)
-    dis = mymodel.Discriminator(481, 32)
+    dis = mymodel.Discriminator(481, args.vec)
 
     # GPUで動かせるのならば動かす
     if args.gpu >= 0:
@@ -187,9 +187,10 @@ def main():
     trainer = training.Trainer(updater, stop_trigger)
 
     # snapshot(学習中の重み情報)の保存
-    trainer.extend(extensions.snapshot(filename='snapshot_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
-    trainer.extend(extensions.snapshot_object(gen, 'gen_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
-    trainer.extend(extensions.snapshot_object(dis, 'dis_epoch_{.updater.epoch}.npz'), trigger=(args.frequency, 'iteration'))
+    frequency = (args.frequency, 'epoch')
+    trainer.extend(extensions.snapshot(filename='snapshot_epoch_{.updater.epoch}.npz'), trigger=frequency)
+    trainer.extend(extensions.snapshot_object(gen, 'gen_epoch_{.updater.epoch}.npz'), trigger=frequency)
+    trainer.extend(extensions.snapshot_object(dis, 'dis_epoch_{.updater.epoch}.npz'), trigger=frequency)
 
     # trainデータでの評価の表示頻度設定
     logreport = extensions.LogReport(trigger=(args.interval, 'iteration'))
