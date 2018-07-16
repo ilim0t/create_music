@@ -119,18 +119,19 @@ def show_chord(gen, dis, num, seed):
         x = chainer.cuda.to_cpu(x.data)
         np.random.seed()
 
-        y = F.argmax(x, axis=1)
-        y = [[tochord(j) for j in i]for i in y.data]
+        # y = F.argmax(x, axis=1)
+        # y = [[tochord(j) for j in i]for i in y.data]
+        a = dis.embed
         with open('result/chord.txt', 'w') as f:
-            for i in y:
-                f.write("   ".join(i) + "\n")
+            for i in x:
+                y = [tochord(j) for j in dis.embed.reverse(i.transpose([1,0]))]
+                f.write("   ".join(y) + "\n")
     return make_chord
-
 
 def main():
     parser = argparse.ArgumentParser(
         description='RNNとかで曲生成したい!')
-    parser.add_argument('--batchsize', '-b', type=int, default=256,
+    parser.add_argument('--batchsize', '-b', type=int, default=64,
                         help='Number of images in each mini-batch')
     parser.add_argument('--epoch', '-e', type=int, default=10,
                         help='Number of sweeps over the dataset to train')
