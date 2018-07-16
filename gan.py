@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-#!/usr/bin/env python
-
 import json
 import argparse
 import copy
@@ -151,7 +149,7 @@ def main():
     print(json.dumps(args.__dict__, indent=2))
 
 
-    gen = mymodel.Generator(481, 128)
+    gen = mymodel.Generator(481, 32)
     dis = mymodel.Discriminator(481, args.vec)
 
     # GPUで動かせるのならば動かす
