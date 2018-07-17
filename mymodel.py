@@ -268,7 +268,7 @@ class Generator(chainer.Chain):
             self.l = L.Linear(64*16)
             # self.bn1 = L.BatchNormalization(128)
 
-            self.deconv = L.DeconvolutionND(1, 64, 128, 7, stride=2, pad=2)
+            self.deconv = L.DeconvolutionND(1, 256, 128, 7, stride=2, pad=2)
             self.lstm = L.NStepBiLSTM(1, 64, 128, 0.1)
 
             self.block1_1 = Res_block2(128, 128, 3)
@@ -284,36 +284,33 @@ class Generator(chainer.Chain):
             self.block4_2 = Res_block2(256, 256, 3)
 
             # self.decoder = L.ConvolutionND(1, 128, n_voc, ksize=1, stride=1)
-            self.decoder2 = L.ConvolutionND(1, 256, 64, ksize=3, stride=1)
             self.bn2 = L.BatchNormalization(256)
+            self.decoder2 = L.ConvolutionND(1, 256, 64, ksize=3, stride=1)
 
     def make_noise(self, batchsize):
         return np.random.uniform(-1, 1, (batchsize, self.n_hidden)).astype(np.float32)
 
-    def __call__(self, z):
-        h = self.l(z)
-        h = F.reshape(h, [h.shape[0], 64, 16])
-        # ren = chainer.Variable(np.array([[[i for i in range(1, 1 + h.shape[2])]] * 1] * h.shape[0], dtype=np.float32))
-        # h = F.concat([h, ren/h.shape[2]], axis=1)
-        # h = self.bn1(h)
+    def __call__(self, z):  # 32
+        h = self.l(z)  # 1024
+        h = F.reshape(h, [h.shape[0], 64, 16])  ## 64, 16
 
-        h = self.deconv(h)
-        # h = F.stack(self.lstm([i for i in h]))
+        h = F.transpose(F.stack(self.lstm(None, None, [i for i in F.transpose(h, [0,2,1])])[2]), [0,2,1])  # 256, 16
+        h = self.deconv(h)  # 128, 33
 
-        h = self.block1_1(h, 0)
-        h = self.block1_2(h, 0)
+        n = 0.2 / 8
+        h = self.block1_1(h, 1 * n)
+        h = self.block1_2(h, 2 * n)
 
-        n = 0.3 / 6
-        h = self.block2_1(h, 1 * n)  # => 128 ×  16
-        h = self.block2_2(h, 2 * n)  # => 128 ×  16
+        h = self.block2_1(h, 3 * n)  # => 128 ×  16
+        h = self.block2_2(h, 4 * n)  # => 128 ×  16
 
-        h = self.block3_1(h, 3 * n)  # => 256 ×   8
-        h = self.block3_2(h, 4 * n)  # => 256 ×   8
+        h = self.block3_1(h, 5 * n)  # => 256 ×   8
+        h = self.block3_2(h, 6 * n)  # => 256 ×   8
 
-        h = self.block4_1(h, 5 * n)  # => 256 ×   8
-        h = self.block4_2(h, 6 * n)  # => 256 ×   8
+        h = self.block4_1(h, 7 * n)  # => 256 ×   8
+        h = self.block4_2(h, 8 * n)  # => 256 ×   8
 
-        # h = self.bn2(h)
+        h = self.bn2(h)
         h = self.decoder2(h)
         return h
         # h = self.decoder(h)
@@ -330,9 +327,9 @@ class Discriminator(chainer.Chain):
         with self.init_scope():
             # self.embed = L.EmbedID(n_vocab, n_vec)
             self.embed = EmbedID(n_vocab, n_vec)
-            self.encoder = L.NStepBiLSTM(n_layers, n_vec, n_vec, self.dropout)
 
-            self.bn1 = L.BatchNormalization(n_vec)
+            # self.bn1 = L.BatchNormalization(n_vec)
+            self.lstm = L.NStepBiLSTM(1, n_vec, n_vec, 0.1)
             self.conv1 = L.ConvolutionND(1, n_vec, 64, 7, stride=2, pad=3)
 
             self.block1_1 = Res_block(64, 64, 3)
@@ -341,14 +338,16 @@ class Discriminator(chainer.Chain):
             self.block2_1 = Res_block(64, 128, 3, init_stride=2)
             self.block2_2 = Res_block(128, 128, 3)
 
-            self.block3_1 = Res_block(128, 64, 3, init_stride=2)
-            self.block3_2 = Res_block(64, 64, 3)
+            self.block3_1 = Res_block(128, 256, 3, init_stride=2)
+            self.block3_2 = Res_block(256, 256, 3)
 
-            self.block4_1 = Res_block(64, 32, 3, init_stride=2)
-            self.block4_2 = Res_block(32, 32, 3)
+            self.block4_1 = Res_block(256, 512, 3, init_stride=2)
+            self.block4_2 = Res_block(512, 512, 3)
 
-            self.bn2 = L.BatchNormalization(32)
+            self.bn2 = L.BatchNormalization(512)
             self.l = L.Linear(1, initialW=initializer)
+
+            self.bn3 = L.BatchNormalization(256)
 
 
     def __call__(self, x):
@@ -363,6 +362,7 @@ class Discriminator(chainer.Chain):
             h = self.sequence_embed(x)
 
         # h = self.bn1(h)
+        # h = F.transpose(F.stack(self.lstm(None, None, [i for i in F.transpose(h, [0,2,1])])[2]), [0,2,1])  # 256, 16
         h = self.conv1(h)
 
         n = 0.5 / 8
@@ -374,15 +374,15 @@ class Discriminator(chainer.Chain):
 
         h = self.block3_1(h, 5 * n)  # => 256 ×   8
         h = self.block3_2(h, 6 * n)  # => 256 ×   8
-
+        # h = self.bn3(h)
         h = self.block4_1(h, 7 * n)  # => 256 ×   8
         h = self.block4_2(h, 8 * n)  # => 256 ×   8
 
+        h = self.bn2(h)
         # h = F.average_pooling_nd(h, h.shape[2])  # global average pooling
-        # h = self.bn2(h)
         h = F.spatial_pyramid_pooling_2d(F.expand_dims(h, axis=3), 2, F.MaxPooling2D)
-        h = F.reshape(h, h.shape[:2])
-        return self.l(F.leaky_relu(h))  # 正: 正解由来
+        h = self.l(h)  # 正: 正解由来
+        return h
 
     def sequence_embed(self, x):
         x_len = [len(i) for i in x]

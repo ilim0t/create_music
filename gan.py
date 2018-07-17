@@ -61,7 +61,15 @@ class DCGANUpdater(chainer.training.StandardUpdater):
         # loss = -F.sum(F.log_softmax(y_real)[:, 0]) / batchsize
         # loss += -F.sum(F.log_softmax(y_fake)[:, 1]) / batchsize
         # loss /= 2
+        chainer.report({'real_loss': L1}, dis)
+        chainer.report({'fake_loss': L2}, dis)
         chainer.report({'loss': loss}, dis)
+
+        precision = np.sum(y_real.data>0) / (np.sum(y_fake.data>0) + np.sum(y_real.data>0))
+        recall = np.average(y_real.data>0)
+        chainer.report({'precision': precision}, dis)
+        chainer.report({'recall': recall}, dis)
+
         return loss
 
     def loss_gen(self, gen, y_fake):
@@ -69,6 +77,9 @@ class DCGANUpdater(chainer.training.StandardUpdater):
         loss = F.sum(F.softplus(-y_fake)) / batchsize
         # loss = -F.sum(F.log_softmax(y_fake)[:, 0]) / batchsize
         chainer.report({'loss': loss}, gen)
+
+        miss = np.average(y_fake.data>0)
+        chainer.report({'miss': miss}, gen)
         return loss
 
     def update_core(self):
@@ -202,12 +213,17 @@ def main():
     if extensions.PlotReport.available():
         trainer.extend(
             extensions.PlotReport(
-                ['gen/loss', 'dis/loss'],
+                ['gen/loss', 'dis/real_loss', 'dis/fake_loss'],
                 'iteration', trigger=(10, 'iteration'), file_name='loss.png'))
+        trainer.extend(
+            extensions.PlotReport(
+                ['gen/miss', 'dis/precision', 'dis/recall'],
+                'iteration', trigger=(10, 'iteration'), file_name='accuracy.png'))
 
     # 各データでの評価の表示(欄に関する)設定
     trainer.extend(extensions.PrintReport(
-        ['epoch', 'iteration', 'gen/loss', 'dis/loss', 'elapsed_time']))
+        ['epoch', 'iteration', 'gen/loss', 'dis/real_loss', 'dis/fake_loss', 'dis/loss',
+         'gen/miss', 'dis/precision', 'dis/recall', 'elapsed_time']))
 
     # プログレスバー表示の設定
     trainer.extend(extensions.ProgressBar(update_interval=args.interval))
