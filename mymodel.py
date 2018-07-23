@@ -156,106 +156,17 @@ class EmbedID(L.EmbedID):
         return result
 
 
-class Res_block(chainer.Chain):
-    def __init__(self, in_channels, out_channels, ksize, init_stride=None, stride=1, pad=1):
-        initializer = chainer.initializers.HeNormal()
-        super(Res_block, self).__init__()
+class GenBlock(chainer.Chain):
+    def __init__(self, in_channels, out_channels, ksize, stride, pad):
+        super(GenBlock, self).__init__()
         with self.init_scope():
-            # pre-activation
-            self.bn1 = L.BatchNormalization(in_channels)
-            self.conv1 = L.ConvolutionND(1, in_channels, out_channels, ksize, init_stride or stride, pad, initialW=initializer)
-            self.bn2 = L.BatchNormalization(out_channels)
-            self.conv2 = L.ConvolutionND(1, out_channels, out_channels, ksize, stride, pad, initialW=initializer)
-            self.bn3 = L.BatchNormalization(out_channels)
+            self.bn = L.BatchNormalization(in_channels)
+            self.deconv = L.DeconvolutionND(1, in_channels, out_channels, ksize, stride, pad)
 
-            self.xconv = L.ConvolutionND(1, in_channels, out_channels, 1, stride=2, initialW=initializer)
-
-    def __call__(self, x, ratio):
-        h = self.bn1(x)
-        h = self.conv1(h)
-        h = F.leaky_relu(self.bn2(h))
-        h = F.dropout(h, ratio)  # Stochastic Depth
-        h = self.conv2(h)
-        h = self.bn3(h)  # 必要?
-
-        if x.shape[2:] != h.shape[2:]:  # skipではないほうのデータの縦×横がこのblock中で小さくなっていた場合skipの方もそれに合わせて小さくする
-            # x = F.average_pooling_2d(x, 1, 2)  # これでいいのか？
-            x = self.xconv(x)
-        if x.shape[1] != h.shape[1]:  # skipではない方のデータのチャンネル数がこのblock内で増えている場合skipの方もそれに合わせて増やす(zero-padding)
-            xp = chainer.cuda.get_array_module(x.data)  # GPUが使える場合も想定
-            p = chainer.Variable(xp.zeros((x.shape[0], h.shape[1] - x.shape[1], *x.shape[2:]), dtype=xp.float32))
-            x = F.concat((x, p))
-        return x + h
-
-
-class Res_block2(chainer.Chain):
-    def __init__(self, in_channels, out_channels, ksize, stride=1, pad=1):
-        initializer = chainer.initializers.HeNormal()
-        super(Res_block2, self).__init__()
-        with self.init_scope():
-            # pre-activation
-            self.bn1 = L.BatchNormalization(in_channels)
-            self.conv1 = L.DeconvolutionND(1, in_channels, out_channels, ksize, stride, pad, initialW=initializer)
-            self.bn2 = L.BatchNormalization(out_channels)
-            self.conv2 = L.DeconvolutionND(1, out_channels, out_channels, 3, 1, 1, initialW=initializer)
-            self.bn3 = L.BatchNormalization(out_channels)
-
-            self.xdeconv = L.DeconvolutionND(1, in_channels, out_channels, 4, 2, 1, initialW=initializer)
-
-    def __call__(self, x, ratio):
-        h = self.bn1(x)
-        h = self.conv1(h)
-        h = F.relu(self.bn2(h))
-        h = F.dropout(h, ratio)  # Stochastic Depth
-        h = self.conv2(h)
-        h = self.bn3(h)  # 必要?
-
-        if x.shape[2:] != h.shape[2:]:  # skipではないほうのデータの縦×横がこのblock中で大きくなっていた場合skipの方もそれに合わせて大きくする
-            # x = F.average_pooling_2d(x, 1, 2)  # これでいいのか？
-            x = self.xdeconv(x)
-        if x.shape[1] != h.shape[1]:  # skipではない方のデータのチャンネル数がこのblock内で増えている場合skipの方もそれに合わせて増やす(zero-padding)
-            xp = chainer.cuda.get_array_module(x.data)  # GPUが使える場合も想定
-            p = chainer.Variable(xp.zeros((x.shape[0], h.shape[1] - x.shape[1], *x.shape[2:]), dtype=xp.float32))
-            x = F.concat((x, p))
-        return x + h
-
-
-class Bottle_neck_block(chainer.Chain):
-    def __init__(self, in_channels, out_channels, ksize, activation=F.relu, init_stride=None, stride=1, pad=1):
-        initializer = chainer.initializers.HeNormal()
-        middle_channels = int(out_channels / 2)
-        self.activation = activation
-        super(Bottle_neck_block, self).__init__()
-        with self.init_scope():
-            # pre-activation & 参考: https://arxiv.org/pdf/1610.02915.pdf
-            self.bn1 = L.BatchNormalization(in_channels)
-            self.conv1 = L.ConvolutionND(1, in_channels, middle_channels, ksize=1, initialW=initializer)
-            self.bn2 = L.BatchNormalization(middle_channels)
-            self.conv2 = L.ConvolutionND(1, middle_channels, middle_channels, ksize, init_stride or stride, pad, initialW=initializer)
-            self.bn3 = L.BatchNormalization(middle_channels)
-            self.conv3 = L.ConvolutionND(1, middle_channels, out_channels, ksize=1, initialW=initializer)
-            self.bn4 = L.BatchNormalization(out_channels)
-
-            self.xconv = L.ConvolutionND(1, middle_channels, out_channels, ksize=1, stride=2, initialW=initializer)
-
-    def __call__(self, x, ratio):
-        h = self.bn1(x)
-        h = self.conv1(h)
-        h = self.activation(self.bn2(h))
-        h = self.conv2(h)
-        h = self.activation(self.bn3(h))
-        h = F.dropout(h, ratio)  # Stochastic Depth
-        h = self.conv3(h)
-        h = self.bn4(h)  # 必要?
-
-        if x.shape[2:] != h.shape[2:]:  # skipではないほうのデータの縦×横がこのblock中で小さくなっていた場合skipの方もそれに合わせて小さくする
-            #x = F.average_pooling_2d(x, 1, 2)  # これでいいのか？
-            x = self.xconv(x)
-        if x.shape[1] != h.shape[1]:  # skipではない方のデータのチャンネル数がこのblock内で増えている場合skipの方もそれに合わせて増やす(zero-padding)
-            xp = chainer.cuda.get_array_module(x.data)  # GPUが使える場合も想定
-            p = chainer.Variable(xp.zeros((x.shape[0], h.shape[1] - x.shape[1], *x.shape[2:]), dtype=xp.float32))
-            x = F.concat((x, p))
-        return x + h
+    def __call__(self, h):
+        h = self.bn(h)
+        h = self.deconv(h)
+        return h
 
 
 class Generator(chainer.Chain):
@@ -265,58 +176,52 @@ class Generator(chainer.Chain):
         self.n_hidden = n_hidden
         initializer = chainer.initializers.HeNormal()
         with self.init_scope():
-            self.l = L.Linear(64*16)
-            # self.bn1 = L.BatchNormalization(128)
+            self.l = L.Linear(16*16)
+            self.deconv = L.DeconvolutionND(1, 16, 32, 7, stride=2, pad=2)
 
-            self.deconv = L.DeconvolutionND(1, 256, 128, 7, stride=2, pad=2)
-            self.lstm = L.NStepBiLSTM(1, 64, 128, 0.1)
+            self.block1 = GenBlock(32, 32, 4, 2, 1)
+            self.block2 = GenBlock(32, 64, 4, 2, 1)
+            self.block3 = GenBlock(64, 64, 4, 2, 1)
+            self.block4 = GenBlock(64, 128, 4, 2, 1)
+            self.block5 = DisBlock(128, 128, 5, 2, 0)
+            self.block6 = DisBlock(128, 256, 3, 1, 1)
 
-            self.block1_1 = Res_block2(128, 128, 3)
-            self.block1_2 = Res_block2(128, 128, 3)
-
-            self.block2_1 = Res_block2(128, 128, 6, stride=2, pad=2)
-            self.block2_2 = Res_block2(128, 128, 3)
-
-            self.block3_1 = Res_block2(128, 128, 6, stride=2, pad=2)
-            self.block3_2 = Res_block2(128, 128, 3)
-
-            self.block4_1 = Res_block2(128, 256, 6, stride=2, pad=2)
-            self.block4_2 = Res_block2(256, 256, 3)
-
-            # self.decoder = L.ConvolutionND(1, 128, n_voc, ksize=1, stride=1)
-            self.bn2 = L.BatchNormalization(256)
-            self.decoder2 = L.ConvolutionND(1, 256, 64, ksize=3, stride=1)
+            self.bn = L.BatchNormalization(256)
+            self.decoder = L.ConvolutionND(1, 256, n_voc, ksize=1, stride=1)
 
     def make_noise(self, batchsize):
         return np.random.uniform(-1, 1, (batchsize, self.n_hidden)).astype(np.float32)
 
     def __call__(self, z):  # 32
         h = self.l(z)  # 1024
-        h = F.reshape(h, [h.shape[0], 64, 16])  ## 64, 16
+        h = F.reshape(h, [h.shape[0], 16, 16])  ## 64, 16
 
-        h = F.transpose(F.stack(self.lstm(None, None, [i for i in F.transpose(h, [0,2,1])])[2]), [0,2,1])  # 256, 16
         h = self.deconv(h)  # 128, 33
 
-        n = 0.2 / 8
-        h = self.block1_1(h, 1 * n)
-        h = self.block1_2(h, 2 * n)
-
-        h = self.block2_1(h, 3 * n)  # => 128 ×  16
-        h = self.block2_2(h, 4 * n)  # => 128 ×  16
-
-        h = self.block3_1(h, 5 * n)  # => 256 ×   8
-        h = self.block3_2(h, 6 * n)  # => 256 ×   8
-
-        h = self.block4_1(h, 7 * n)  # => 256 ×   8
-        h = self.block4_2(h, 8 * n)  # => 256 ×   8
-
-        h = self.bn2(h)
-        h = self.decoder2(h)
+        h = self.block1(h)
+        h = self.block2(h)
+        h = self.block3(h)
+        h = self.block4(h)
+        h = self.block5(h)
+        h = self.block6(h)
+        # h = self.block7(h)
+        # h = self.block8(h)
+        h = self.bn(h)
+        h = self.decoder(h)
         return h
-        # h = self.decoder(h)
-        # # h = self.bn(h)
-        # return h
 
+
+class DisBlock(chainer.Chain):
+    def __init__(self, in_channels, out_channels, ksize, stride, pad):
+        super(DisBlock, self).__init__()
+        with self.init_scope():
+            self.bn = L.BatchNormalization(in_channels)
+            self.conv = L.ConvolutionND(1, in_channels, out_channels, ksize, stride, pad)
+
+    def __call__(self, h):
+        h = self.bn(h)
+        h = self.conv(h)
+        return h
 
 class Discriminator(chainer.Chain):
     def __init__(self, n_vocab, n_vec, n_layers=2, bottom_width=3, ch=512, wscale=0.02):
@@ -328,60 +233,47 @@ class Discriminator(chainer.Chain):
             # self.embed = L.EmbedID(n_vocab, n_vec)
             self.embed = EmbedID(n_vocab, n_vec)
 
-            # self.bn1 = L.BatchNormalization(n_vec)
-            self.lstm = L.NStepBiLSTM(1, n_vec, n_vec, 0.1)
-            self.conv1 = L.ConvolutionND(1, n_vec, 64, 7, stride=2, pad=3)
+            self.bn1 = L.BatchNormalization(n_vec)
+            self.conv1 = L.ConvolutionND(1, n_vec, 32, 7, stride=2, pad=3)
 
-            self.block1_1 = Res_block(64, 64, 3)
-            self.block1_2 = Res_block(64, 64, 3)
+            self.block1 = DisBlock(32, 32, 3, 1, 0)
+            self.block2 = DisBlock(32, 64, 3, 2, 0)
+            self.block3 = DisBlock(64, 64, 3, 1, 0)
+            self.block4 = DisBlock(64, 128, 3, 2, 0)
+            self.block5 = DisBlock(128, 128, 3, 1, 0)
+            self.block6 = DisBlock(128, 256, 3, 2, 0)
 
-            self.block2_1 = Res_block(64, 128, 3, init_stride=2)
-            self.block2_2 = Res_block(128, 128, 3)
-
-            self.block3_1 = Res_block(128, 256, 3, init_stride=2)
-            self.block3_2 = Res_block(256, 256, 3)
-
-            self.block4_1 = Res_block(256, 512, 3, init_stride=2)
-            self.block4_2 = Res_block(512, 512, 3)
-
-            self.bn2 = L.BatchNormalization(512)
+            self.bn2 = L.BatchNormalization(256)
             self.l = L.Linear(1, initialW=initializer)
-
-            self.bn3 = L.BatchNormalization(256)
 
 
     def __call__(self, x):
         if isinstance(x, chainer.Variable):
-            h = x
-            # h = F.softmax(x, axis=1)
-            # w = F.expand_dims(self.embed.W.T, axis=2)
-            # h = F.convolution_nd(h, w)
+            # h = self.bn1(x)
+            h = F.softmax(x, axis=1)
+            w = F.expand_dims(self.embed.W.T, axis=2)
+            h = F.convolution_nd(h, w)
             # # h = F.transpose(self.embed(F.argmax(x, axis=1)), [0, 2, 1])
             # # h /= 2
         else:
             h = self.sequence_embed(x)
 
-        # h = self.bn1(h)
-        # h = F.transpose(F.stack(self.lstm(None, None, [i for i in F.transpose(h, [0,2,1])])[2]), [0,2,1])  # 256, 16
+        h = self.bn1(h)
         h = self.conv1(h)
 
-        n = 0.5 / 8
-        h = self.block1_1(h, 1 * n)  # => 64  ×  32
-        h = self.block1_2(h, 2 * n)  # => 64  ×  32
-
-        h = self.block2_1(h, 3 * n)  # => 128 ×  16
-        h = self.block2_2(h, 4 * n)  # => 128 ×  16
-
-        h = self.block3_1(h, 5 * n)  # => 256 ×   8
-        h = self.block3_2(h, 6 * n)  # => 256 ×   8
-        # h = self.bn3(h)
-        h = self.block4_1(h, 7 * n)  # => 256 ×   8
-        h = self.block4_2(h, 8 * n)  # => 256 ×   8
+        h = self.block1(h)
+        h = self.block2(h)
+        h = self.block3(h)
+        h = self.block4(h)
+        h = self.block5(h)
+        h = self.block6(h)
+        # h = self.block7(h)
+        # h = self.block8(h)
 
         h = self.bn2(h)
-        # h = F.average_pooling_nd(h, h.shape[2])  # global average pooling
-        h = F.spatial_pyramid_pooling_2d(F.expand_dims(h, axis=3), 2, F.MaxPooling2D)
+        h = F.average_pooling_nd(h, h.shape[2])  # global average pooling
         h = self.l(h)  # 正: 正解由来
+        h = F.sigmoid(h)
         return h
 
     def sequence_embed(self, x):

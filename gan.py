@@ -47,16 +47,18 @@ class Trans(object):
 
 
 class DCGANUpdater(chainer.training.StandardUpdater):
-    # 0 -> 生成由来
-    # 1 -> 実際由来
+    # 負 -> 生成由来
+    # 正 -> 実際由来
     def __init__(self, *args, **kwargs):
         self.gen, self.dis = kwargs.pop('models')
         super(DCGANUpdater, self).__init__(*args, **kwargs)
 
     def loss_dis(self, dis, y_fake, y_real):
         batchsize = len(y_fake)
-        L1 = F.sum(F.softplus(-y_real)) / batchsize
-        L2 = F.sum(F.softplus(y_fake)) / batchsize
+        # L1 = F.sum(F.softplus(-y_real)) / batchsize
+        # L2 = F.sum(F.softplus(y_fake)) / batchsize
+        L1 = - F.sum(F.log(y_real)) / batchsize
+        L2 = - F.sum(F.log(1 - y_fake)) / batchsize
         loss = L1 + L2
         # loss = -F.sum(F.log_softmax(y_real)[:, 0]) / batchsize
         # loss += -F.sum(F.log_softmax(y_fake)[:, 1]) / batchsize
@@ -74,8 +76,8 @@ class DCGANUpdater(chainer.training.StandardUpdater):
 
     def loss_gen(self, gen, y_fake):
         batchsize = len(y_fake)
-        loss = F.sum(F.softplus(-y_fake)) / batchsize
-        # loss = -F.sum(F.log_softmax(y_fake)[:, 0]) / batchsize
+        # loss = F.sum(F.softplus(-y_fake)) / batchsize
+        loss = F.sum(F.log(1 - y_fake)) / batchsize
         chainer.report({'loss': loss}, gen)
 
         miss = np.average(y_fake.data>0)
@@ -130,12 +132,10 @@ def show_chord(gen, dis, num, seed):
         x = chainer.cuda.to_cpu(x.data)
         np.random.seed()
 
-        # y = F.argmax(x, axis=1)
-        # y = [[tochord(j) for j in i]for i in y.data]
-        a = dis.embed
         with open('result/chord.txt', 'w') as f:
             for i in x:
-                y = [tochord(j) for j in dis.embed.reverse(i.transpose([1,0]))]
+                # y = [tochord(j) for j in dis.embed.reverse(i.transpose([1,0]))]
+                y = [tochord(j) for j in np.argmax(i, axis=0)]
                 f.write("   ".join(y) + "\n")
     return make_chord
 
@@ -175,8 +175,8 @@ def main():
     opt_dis = chainer.optimizers.Adam()
     opt_gen.setup(gen)
     opt_dis.setup(dis)
-    opt_gen.add_hook(chainer.optimizer.WeightDecay(0.0001))
-    opt_dis.add_hook(chainer.optimizer.WeightDecay(0.0001))
+    # opt_gen.add_hook(chainer.optimizer.WeightDecay(0.0001))
+    # opt_dis.add_hook(chainer.optimizer.WeightDecay(0.0001))
 
     # データセットのセットアップ
     trans = Trans()
@@ -214,11 +214,11 @@ def main():
         trainer.extend(
             extensions.PlotReport(
                 ['gen/loss', 'dis/real_loss', 'dis/fake_loss'],
-                'iteration', trigger=(10, 'iteration'), file_name='loss.png'))
+                'iteration', trigger=(2, 'iteration'), file_name='loss.png'))
         trainer.extend(
             extensions.PlotReport(
                 ['gen/miss', 'dis/precision', 'dis/recall'],
-                'iteration', trigger=(10, 'iteration'), file_name='accuracy.png'))
+                'iteration', trigger=(2, 'iteration'), file_name='accuracy.png'))
 
     # 各データでの評価の表示(欄に関する)設定
     trainer.extend(extensions.PrintReport(
